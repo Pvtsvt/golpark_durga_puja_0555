@@ -157,11 +157,11 @@ def background_css():
     # Photo ke upar safed/kaala parda (overlay) - isse photo halki dikhti hai, data saaf
     return (
         "<style>"
-        ".stApp{background-image:linear-gradient(rgba(255,255,255,0.5),rgba(255,255,255,0.5)),"
+        ".stApp{background-image:linear-gradient(rgba(255,255,255,0.6),rgba(255,255,255,0.6)),"
         f"url('data:image/jpeg;base64,{b64}');"
         "background-size:cover;background-position:center top;background-repeat:no-repeat;}"
         "@media (prefers-color-scheme: dark){"
-        ".stApp{background-image:linear-gradient(rgba(14,17,23,0.5),rgba(14,17,23,0.5)),"
+        ".stApp{background-image:linear-gradient(rgba(14,17,23,0.6),rgba(14,17,23,0.6)),"
         f"url('data:image/jpeg;base64,{b64}');}}"
         "}"
         "</style>"
@@ -187,17 +187,17 @@ st.markdown(
     div[data-testid="stHorizontalBlock"] { flex-wrap: nowrap !important; align-items: center; }
     div[data-testid="stHorizontalBlock"] > div { min-width: 0 !important; }
     [data-testid="stDataFrame"], [data-testid="stDataEditor"] { opacity: 0.7; }
-    .qno-label { font-size: 1.6rem; font-weight: 800; margin: 0; white-space: nowrap;
-                 display: flex; align-items: center; min-height: 3rem; color: #000;
-                 background: rgba(255,255,255,0.75); padding: 0 0.5rem; border-radius: 0.4rem; }
-    /* label sirf apni zaroorat jitni jagah le, baaki poori jagah search bar ko mile */
-    div[data-testid="stHorizontalBlock"]:has(.qno-label) { gap: 0.4rem; }
+    /* label aur search box ek hi line me, upar se barabar */
+    .qno-label { font-size: 1.6rem; font-weight: 800; margin: 0 !important; padding: 0;
+                 white-space: nowrap; height: 2.9rem; line-height: 2.9rem; color: #000; }
+    div[data-testid="stHorizontalBlock"]:has(.qno-label) { gap: 0.4rem; align-items: flex-start; }
     div[data-testid="stHorizontalBlock"]:has(.qno-label) > div:first-child {
         flex: 0 0 auto !important; width: auto !important; min-width: max-content !important; }
     div[data-testid="stHorizontalBlock"]:has(.qno-label) > div:last-child {
         flex: 1 1 0 !important; width: auto !important; }
-    .stApp h1 { font-weight: 900 !important; color: #000 !important; display: inline-block;
-                background: rgba(255,255,255,0.75); padding: 0.1em 0.5em; border-radius: 0.4rem; }
+    div[data-testid="stHorizontalBlock"]:has(.qno-label) [data-testid="stMarkdownContainer"] p {
+        margin: 0 !important; }
+    .stApp h1 { font-weight: 900 !important; color: #000 !important; }
     </style>
     """,
     unsafe_allow_html=True,
