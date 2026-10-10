@@ -1,4 +1,5 @@
 import streamlit as st
+from st_keyup import st_keyup
 from streamlit_gsheets import GSheetsConnection
 
 st.set_page_config(page_title="Golpark Durga Puja 2026", layout="wide")
@@ -14,7 +15,6 @@ allowed_pins = [str(p) for p in st.secrets.get("ADMIN_PINS", ["12345"])]
 # 3. Session state
 st.session_state.setdefault("role", "User")
 st.session_state.setdefault("admin_ok", False)
-st.session_state.setdefault("selected_row", None)
 st.session_state.setdefault("pin_error", False)
 
 
@@ -58,15 +58,15 @@ is_admin = st.session_state.role == "Admin" and st.session_state.admin_ok
 # 5. Header
 st.title("Golpark Durga Puja 2026")
 
-# 6. Search bar (Quarter number: C1, D21, ...)
-
-# Bade font / bada search box, taaki elderly users ko aasani ho
+# Bade font / bada search box (elderly users ke liye) aur mobile par label + box ek hi line me
 st.markdown(
     """
     <style>
-    div[data-testid="stTextInput"] input { font-size: 1.4rem; padding: 0.7rem; }
-    div[data-testid="stTextInput"] label p { font-size: 1.2rem; font-weight: 600; }
-    div[data-testid="stButton"] button { font-size: 1.1rem; }
+    div[data-testid="stTextInput"] input,
+    div[data-testid="stCustomComponentV1"] { font-size: 1.4rem; }
+    div[data-testid="stHorizontalBlock"] { flex-wrap: nowrap !important; align-items: center; }
+    div[data-testid="stHorizontalBlock"] > div { min-width: 0 !important; }
+    .qno-label { font-size: 1.3rem; font-weight: 700; margin: 0; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -78,108 +78,78 @@ qno_col = next(
     None,
 )
 
-
-def show_results(q, columns, key_prefix):
-    """Prefix match karke result buttons dikhao; click par row select ho jati hai."""
-    norm_df = df[columns].apply(normalize)
-    matches = df[norm_df.apply(lambda col: col.str.startswith(q)).any(axis=1)]
-    if matches.empty:
-        st.warning("Koi result nahi mila.")
-        return
-    st.caption(f"{len(matches)} result mile - row kholne ke liye click karein")
-    max_show = 40
-    cols = st.columns(8)
-    for i, idx in enumerate(matches.index[:max_show]):
-        # jis cell se match hua uski value button par dikhao
-        hit = next(c for c in columns if norm_df.at[idx, c].startswith(q))
-        label = str(df.at[idx, hit]).strip()
-        if cols[i % 8].button(label, key=f"{key_prefix}_{idx}", use_container_width=True):
-            st.session_state.selected_row = idx
-    if len(matches) > max_show:
-        st.caption(f"Sirf pehle {max_show} dikhaye gaye, search aur specific karein.")
-
-
-# Main search: sirf Q.No. column me
-q_qno = ""
-if qno_col is not None:
-    query = st.text_input(
-        "Apna Quarter Number likhiye",
+# 6. Search bar: type karte hi live filter (Enter ki zaroorat nahi)
+label_col, input_col = st.columns([1, 2])
+label_col.markdown('<p class="qno-label">Quarter No:</p>', unsafe_allow_html=True)
+with input_col:
+    typed = st_keyup(
+        "Quarter No",
         placeholder="jaise C1, D2, D21",
         key="search_qno",
+        label_visibility="collapsed",
     )
-    q_qno = "".join(query.split()).upper()
-    if q_qno:
-        show_results(q_qno, [qno_col], "qno")
-else:
+q = "".join((typed or "").split()).upper()
+
+if qno_col is None:
     st.warning("Sheet me 'Q.No.' column nahi mila.")
 
-# Alag se: poori sheet me search (naam, phone, etc.)
-with st.expander("Dusre details se search karein (poori sheet me)"):
-    query_all = st.text_input(
-        "Kuch bhi likhiye",
-        placeholder="naam, number, ...",
-        key="search_all",
-    )
-    q_all = "".join(query_all.split()).upper()
-    if q_all:
-        show_results(q_all, list(df.columns), "all")
+# 7. Filter: Q.No. prefix match (C2 -> C2, C21, C22 ... ; C23 -> sirf C23)
+mask = None
+if q and qno_col is not None:
+    mask = normalize(df[qno_col]).str.startswith(q)
 
-if not q_qno and not q_all:
-    st.session_state.selected_row = None
+filtered = df if mask is None else df[mask]
+is_filtered = mask is not None
 
-selected = st.session_state.selected_row
-if selected is not None and selected not in df.index:
-    selected = st.session_state.selected_row = None
+if is_filtered:
+    st.caption(f"{len(filtered)} row mili")
+    if filtered.empty:
+        st.warning("Koi result nahi mila.")
 
-
-def clear_selection():
-    st.session_state.selected_row = None
-
-
-# 7. View vs Edit Mode
+# 8. View vs Edit Mode (dono me same search/filter)
 if is_admin:
-    st.info("Niche table me double click karke edit karein, ya nayi row add karein.")
+    st.session_state.setdefault("editor_ver", 0)
+    top_bar = st.container()
+    edited = st.data_editor(
+        filtered,
+        num_rows="fixed" if is_filtered else "dynamic",
+        hide_index=True,
+        use_container_width=True,
+        # key badalne se editor reset hota hai -> sirf unsaved edits hatte hain
+        key=f"editor_{q}_{st.session_state.editor_ver}",
+    )
+    bottom_bar = st.container()
 
-    if selected is not None:
-        st.subheader("Selected Row")
-        st.button("Show all rows", on_click=clear_selection)
-        edited_row = st.data_editor(
-            df.loc[[selected]],
-            hide_index=True,
-            use_container_width=True,
-            key=f"edit_row_{selected}",
-        )
-        if st.button("Save Changes to Google Sheet", type="primary"):
-            with st.spinner("Saving data to cloud..."):
+    def action_buttons(where, suffix):
+        with where:
+            save_col, cancel_col, _ = st.columns([1, 1, 2])
+            save = save_col.button(
+                "Save Change", type="primary", key=f"save_{suffix}", use_container_width=True
+            )
+            cancel = cancel_col.button(
+                "Cancel Changes", key=f"cancel_{suffix}", use_container_width=True
+            )
+        return save, cancel
+
+    save_top, cancel_top = action_buttons(top_bar, "top")
+    save_bottom, cancel_bottom = action_buttons(bottom_bar, "bottom")
+
+    if cancel_top or cancel_bottom:
+        # Sheet me jo already saved hai wo touch nahi hota, bas unsaved edits hat jaate hain
+        st.session_state.editor_ver += 1
+        st.rerun()
+
+    if save_top or save_bottom:
+        with st.spinner("Saving data to cloud..."):
+            if is_filtered:
                 updated = df.copy()
-                updated.loc[selected] = edited_row.iloc[0]
-                conn.update(data=updated)
-                st.success("Google Sheet successfully update ho gayi!")
-                st.cache_data.clear()
-                st.rerun()
-    else:
-        edited_df = st.data_editor(
-            df, num_rows="dynamic", hide_index=True, use_container_width=True
-        )
-        if st.button("Save Changes to Google Sheet", type="primary"):
-            with st.spinner("Saving data to cloud..."):
-                conn.update(data=edited_df)
-                st.success("Google Sheet successfully update ho gayi!")
-                st.cache_data.clear()
-                st.rerun()
+                updated.loc[edited.index] = edited
+            else:
+                updated = edited
+            conn.update(data=updated)
+            st.cache_data.clear()
+            st.session_state.editor_ver += 1
+            st.toast("Google Sheet successfully update ho gayi!")
+            st.rerun()
 else:
-    if selected is not None:
-        st.subheader("Selected Row")
-        st.dataframe(df.loc[[selected]], hide_index=True, use_container_width=True)
-        st.button("Show all rows", on_click=clear_selection)
-        st.subheader("All Records")
-        highlighted = df.style.apply(
-            lambda row: [
-                "background-color: #ffe08a; color: black" if row.name == selected else ""
-                for _ in row
-            ],
-            axis=1,
-        )
-        st.dataframe(highlighted, hide_index=True, use_container_width=True)
-    else:
-        st.dataframe(df, hide_index=True, use_container_width=True)
+    st.dataframe(filtered, hide_index=True, use_container_width=True)
