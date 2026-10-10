@@ -4,3 +4,4 @@ pandas
 openpyxl
 gspread
 streamlit-keyup
+streamlit-js-eval

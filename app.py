@@ -1,16 +1,19 @@
 import base64
+import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 from st_keyup import st_keyup
+from streamlit_js_eval import streamlit_js_eval
 from streamlit_gsheets import GSheetsConnection
 
 st.set_page_config(page_title="Golpark Durga Puja 2026", layout="wide")
 
 # --- Column helpers: Status / 2025 / 2026 / Date ---
-STATUS_OPTIONS = ["Pending", "Paid"]
+STATUS_OPTIONS = ["Pending", "Paid", "Deathcase", "Khichdi", "Donation"]
 DATE_FMT = "%d/%m/%Y"
 
 
@@ -26,6 +29,7 @@ def special_cols(data):
         "status": find_col(data, lambda n: n == "status"),
         "y2025": find_col(data, lambda n: n == "2025"),
         "y2026": find_col(data, lambda n: n == "2026"),
+        "logs": find_col(data, lambda n: n in ("logs", "log")),
         "date": find_col(data, lambda n: n == "date" or n.endswith(" date") or n.startswith("date ")),
     }
 
@@ -48,6 +52,10 @@ def prep(data):
         data[c["status"]] = norm.where(norm.isin(STATUS_OPTIONS), None).astype("object")
     if c["y2026"] is not None:
         data[c["y2026"]] = data[c["y2026"]].map(_num_text).astype("object")
+    if c["logs"] is not None:
+        data[c["logs"]] = data[c["logs"]].map(
+            lambda v: None if pd.isna(v) or str(v).strip() == "" else str(v)
+        ).astype("object")
     if c["date"] is not None:
         col = data[c["date"]]
         parsed = pd.to_datetime(col, dayfirst=True, errors="coerce")
@@ -68,6 +76,107 @@ def to_sheet(data):
     return data
 
 
+def _cell_text(v):
+    if v is None or (not hasattr(v, "strftime") and pd.isna(v)):
+        return ""
+    if hasattr(v, "strftime"):
+        return v.strftime(DATE_FMT)
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    return str(v).strip()
+
+
+# Model code ke pattern se brand pehchanna (browser sirf model code deta hai)
+BRAND_PATTERNS = [
+    (r"^(SM-|GT-|SCH-|SGH-|SHV-)", "Samsung"),
+    (r"^(Redmi|POCO|Mi |MI |MIX|M\d{4}[A-Z0-9]+$|\d{5,8}[A-Z0-9]{1,6}$)", "Xiaomi"),
+    (r"^(RMX|realme)", "Realme"),
+    (r"^(CPH|OPPO|PH[A-Z]\d)", "Oppo"),
+    (r"^(vivo|V\d{4}|I\d{4}$)", "Vivo"),
+    (r"^(IN\d{4}|KB\d{4}|LE\d{4}|HD\d{4}|GM\d{4}|OnePlus|ONEPLUS)", "OnePlus"),
+    (r"^(moto|XT\d{4})", "Motorola"),
+    (r"^(Pixel)", "Google"),
+    (r"^(TA-\d{4}|Nokia)", "Nokia"),
+    (r"^(Infinix|X\d{4}[A-Z]?$)", "Infinix"),
+    (r"^(TECNO|Tecno)", "Tecno"),
+    (r"^(itel|Itel)", "itel"),
+    (r"^(Lenovo|L\d{5})", "Lenovo"),
+    (r"^(HUAWEI|[A-Z]{3}-[AL]\d{2})", "Huawei"),
+    (r"^(LAVA|Lava)", "Lava"),
+]
+
+
+def with_brand(model):
+    """'SM-A055F' -> 'Samsung SM-A055F' (brand model ke pattern se anumaan hai)."""
+    for pat, brand in BRAND_PATTERNS:
+        if re.match(pat, model):
+            if model.lower().startswith(brand.lower()):
+                return model
+            return f"{brand} {model}"
+    return model
+
+
+def device_from_ua(ua, model=""):
+    """Browser se milne wale model / User-Agent se device ka naam (brand + model) nikalo."""
+    model = (model or "").strip()
+    if not model:
+        m = re.search(r"Android [\d.]+; ([^;)]+?)(?: Build|[;)])", ua or "")
+        if m and m.group(1).strip() not in ("K", "Mobile"):
+            model = m.group(1).strip()
+    if model:
+        return with_brand(model)
+    for key, name in (("iPhone", "Apple iPhone"), ("iPad", "Apple iPad"), ("Windows", "Windows PC"),
+                      ("Macintosh", "Apple Mac"), ("Android", "Android phone"), ("Linux", "Linux PC")):
+        if key in (ua or ""):
+            return name
+    return "Unknown device"
+
+
+def auto_date(old_df, new_df, cols):
+    """Jis row me koi bhi cell badla aur Date user ne nahi badli, uski Date aaj ki kar do."""
+    date_col = special_cols(new_df)["date"]
+    if date_col is None:
+        return new_df
+    today = datetime.now(timezone(timedelta(hours=5, minutes=30))).date()
+    as_date = new_df[date_col].map(lambda v: hasattr(v, "strftime")).any() or new_df[date_col].isna().all()
+    value = today if as_date else today.strftime(DATE_FMT)
+    other = [c for c in cols if c != date_col]
+    for idx in new_df.index:
+        if idx not in old_df.index:
+            if not _cell_text(new_df.at[idx, date_col]):
+                new_df.at[idx, date_col] = value
+            continue
+        changed = any(_cell_text(old_df.at[idx, c]) != _cell_text(new_df.at[idx, c]) for c in other)
+        date_untouched = _cell_text(old_df.at[idx, date_col]) == _cell_text(new_df.at[idx, date_col])
+        if changed and date_untouched:
+            new_df.at[idx, date_col] = value
+    return new_df
+
+
+def add_logs(old_df, new_df, cols, logs_col, device):
+    """Jo cell badla uska log new_df[logs_col] me jod do (sheet me jayega, app me nahi dikhega)."""
+    if logs_col is None:
+        return new_df
+    ist = timezone(timedelta(hours=5, minutes=30))
+    stamp = datetime.now(ist).strftime("%d/%m/%Y %I:%M %p")
+    for idx in new_df.index:
+        if idx in old_df.index:
+            changes = []
+            for c in cols:
+                o, n = _cell_text(old_df.at[idx, c]), _cell_text(new_df.at[idx, c])
+                if o != n:
+                    changes.append(f"{c}: {o or '(blank)'} -> {n or '(blank)'}")
+            if not changes:
+                continue
+            entry = f"{stamp} | {device} | " + "; ".join(changes)
+        else:
+            entry = f"{stamp} | {device} | New row added"
+        prev = new_df.at[idx, logs_col]
+        prev = "" if prev is None or (not isinstance(prev, str) and pd.isna(prev)) else str(prev)
+        new_df.at[idx, logs_col] = (prev + chr(10) + entry).strip()
+    return new_df
+
+
 def editor_config(data):
     c = special_cols(data)
     cfg = {}
@@ -78,12 +187,8 @@ def editor_config(data):
     if c["y2025"] is not None:
         cfg[c["y2025"]] = st.column_config.Column(disabled=True)
     if c["y2026"] is not None:
-        # sirf digits aur comma (jaise 500 ya 1,500)
-        cfg[c["y2026"]] = st.column_config.TextColumn(
-            str(c["y2026"]),
-            validate=r"^[0-9]+(,[0-9]+)*$",
-            help="Sirf number ya comma",
-        )
+        # free text: kuch bhi likh sakte hain
+        cfg[c["y2026"]] = st.column_config.TextColumn(str(c["y2026"]))
     if c["date"] is not None and data[c["date"]].map(lambda v: hasattr(v, "strftime")).any():
         cfg[c["date"]] = st.column_config.DateColumn(str(c["date"]), format="DD/MM/YYYY")
     return cfg
@@ -146,6 +251,19 @@ else:
         st.sidebar.error("Galat PIN hai!")
 
 is_admin = st.session_state.role == "Admin" and st.session_state.admin_ok
+
+# Admin ke device ka naam (browser se) - log me likhne ke liye
+_dev = streamlit_js_eval(
+    js_expressions=(
+        "(navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) "
+        "? navigator.userAgentData.getHighEntropyValues(['model']).then(v => (v.model || '') + '||' + navigator.userAgent) "
+        ": ('' + '||' + navigator.userAgent)"
+    ),
+    key="device_info",
+)
+if _dev:
+    _model, _, _ua = str(_dev).partition("||")
+    st.session_state.device = device_from_ua(_ua, _model)
 
 # Background: Maa Durga ki halki (transparent) photo, data ke peeche
 @st.cache_resource
@@ -246,14 +364,16 @@ filtered, is_filtered = apply_filter(df, q)
 if is_admin:
     show_summary(filtered, is_filtered)
     st.session_state.setdefault("editor_ver", 0)
+    logs_col = special_cols(df)["logs"]
+    view_cols = [c for c in df.columns if c != logs_col]  # Logs app me nahi dikhega
     top_bar = st.container()
     edited = st.data_editor(
-        filtered,
+        filtered[view_cols],
         num_rows="fixed" if is_filtered else "dynamic",
         hide_index=True,
         use_container_width=True,
-        column_config=editor_config(filtered),
-        column_order=list(df.columns),  # sheet wala order hi rahe
+        column_config=editor_config(filtered[view_cols]),
+        column_order=view_cols,  # sheet wala order hi rahe
         # key badalne se editor reset hota hai -> sirf unsaved edits hatte hain
         key=f"editor_{q}_{st.session_state.editor_ver}",
     )
@@ -273,12 +393,21 @@ if is_admin:
         with st.spinner("Saving data to cloud..."):
             if is_filtered:
                 updated = df.copy()
-                updated.loc[edited.index] = edited
+                updated.loc[edited.index, view_cols] = edited[view_cols]
             else:
-                updated = edited
+                updated = edited.copy()
+                if logs_col is not None:
+                    updated[logs_col] = df[logs_col].reindex(updated.index)
+                updated = updated[list(df.columns)]
+            updated = auto_date(df, updated, view_cols)
+            updated = add_logs(
+                df, updated, view_cols, logs_col,
+                st.session_state.get("device", "Unknown device"),
+            )
             conn.update(data=to_sheet(updated))
             st.cache_data.clear()
             st.session_state.editor_ver += 1
+        return True
 
     save_top, cancel_top, done_top = action_buttons(top_bar, "top")
     save_bottom, cancel_bottom, done_bottom = action_buttons(bottom_bar, "bottom")
@@ -291,15 +420,15 @@ if is_admin:
 
     if done_top or done_bottom:
         # Save + User mode me wapas
-        save_to_sheet()
-        st.session_state.go_user = True
-        st.session_state.flash = "Saved! Back to User mode"
-        st.rerun()
+        if save_to_sheet():
+            st.session_state.go_user = True
+            st.session_state.flash = "Saved! Back to User mode"
+            st.rerun()
 
     if save_top or save_bottom:
-        save_to_sheet()
-        st.session_state.flash = "Data Saved!"
-        st.rerun()
+        if save_to_sheet():
+            st.session_state.flash = "Data Saved!"
+            st.rerun()
 else:
     # User mode: har 5 minute me sheet se naya data apne aap aa jata hai
     @st.fragment(run_every=300)
@@ -307,11 +436,12 @@ else:
         fresh = prep(conn.read(ttl=0))
         view, filt = apply_filter(fresh, st.session_state.get("search_qno", ""))
         show_summary(view, filt)
+        shown_cols = [c for c in fresh.columns if c != special_cols(fresh)["logs"]]
         st.dataframe(
-            view,
+            view[shown_cols],
             hide_index=True,
             use_container_width=True,
-            column_order=list(fresh.columns),  # sheet wala order hi rahe
+            column_order=shown_cols,  # sheet wala order hi rahe
             column_config={
                 k: v for k, v in editor_config(view).items() if k == special_cols(view)["date"]
             },
