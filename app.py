@@ -186,8 +186,13 @@ st.markdown(
     div[data-testid="stCustomComponentV1"] { font-size: 1.4rem; }
     div[data-testid="stHorizontalBlock"] { flex-wrap: nowrap !important; align-items: center; }
     div[data-testid="stHorizontalBlock"] > div { min-width: 0 !important; }
-    [data-testid="stDataFrame"], [data-testid="stDataEditor"] { opacity: 0.8; }
-    .qno-label { font-size: 1.3rem; font-weight: 700; margin: 0; }
+    [data-testid="stDataFrame"], [data-testid="stDataEditor"] { opacity: 0.7; }
+    .qno-label { font-size: 1.4rem; font-weight: 700; margin: 0; white-space: nowrap; }
+    .stApp h1 { font-weight: 900 !important; color: #000 !important;
+                text-shadow: 0 0 8px rgba(255,255,255,0.9); }
+    @media (prefers-color-scheme: dark) {
+        .stApp h1 { color: #fff !important; text-shadow: 0 0 8px rgba(0,0,0,0.9); }
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -200,7 +205,7 @@ qno_col = next(
 )
 
 # 6. Search bar: type karte hi live filter (Enter ki zaroorat nahi)
-label_col, input_col = st.columns([1, 2])
+label_col, input_col = st.columns([1, 3])
 label_col.markdown('<p class="qno-label">Quarter No:</p>', unsafe_allow_html=True)
 with input_col:
     typed = st_keyup(
