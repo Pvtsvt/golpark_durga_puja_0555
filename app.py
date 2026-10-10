@@ -367,16 +367,34 @@ if is_admin:
     logs_col = special_cols(df)["logs"]
     view_cols = [c for c in df.columns if c != logs_col]  # Logs app me nahi dikhega
     top_bar = st.container()
+
+    # Working copy: edits yahan jama hote hain taaki auto-Date turant table me dikhe
+    work_key = (q, st.session_state.editor_ver)
+    if st.session_state.get("work_key") != work_key:
+        st.session_state.work_key = work_key
+        st.session_state.work_df = filtered[view_cols].copy()
+        st.session_state.work_rev = 0
+    work_df = st.session_state.work_df
+
     edited = st.data_editor(
-        filtered[view_cols],
+        work_df,
         num_rows="fixed" if is_filtered else "dynamic",
         hide_index=True,
         use_container_width=True,
-        column_config=editor_config(filtered[view_cols]),
+        column_config=editor_config(work_df),
         column_order=view_cols,  # sheet wala order hi rahe
         # key badalne se editor reset hota hai -> sirf unsaved edits hatte hain
-        key=f"editor_{q}_{st.session_state.editor_ver}",
+        key=f"editor_{q}_{st.session_state.editor_ver}_{st.session_state.work_rev}",
     )
+
+    # Row edit hote hi Date aaj ki ho jaye (user chahe to badal sakta hai; save button par hi save hota hai)
+    date_col = special_cols(df)["date"]
+    if date_col is not None:
+        auto = auto_date(df, edited.copy(), view_cols)
+        if not auto[date_col].map(_cell_text).equals(edited[date_col].map(_cell_text)):
+            st.session_state.work_df = auto
+            st.session_state.work_rev += 1
+            st.rerun()
     bottom_bar = st.container()
 
     def action_buttons(where, suffix):
