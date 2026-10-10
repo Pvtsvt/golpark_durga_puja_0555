@@ -73,19 +73,18 @@ def background_css():
     if not img.exists():
         return ""
     b64 = base64.b64encode(img.read_bytes()).decode()
-    return f"""
-    <style>
-    .stApp {{ position: relative; z-index: 0; }}
-    .stApp::before {{
-        content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
-        background: url("data:image/jpeg;base64,{b64}") center top / cover no-repeat;
-        opacity: 0.35;
-    }}
-    @media (prefers-color-scheme: dark) {{
-        .stApp::before {{ opacity: 0.12; }}
-    }}
-    </style>
-    """
+    # Photo ke upar safed/kaala parda (overlay) - isse photo halki dikhti hai, data saaf
+    return (
+        "<style>"
+        ".stApp{background-image:linear-gradient(rgba(255,255,255,0.62),rgba(255,255,255,0.62)),"
+        f"url('data:image/jpeg;base64,{b64}');"
+        "background-size:cover;background-position:center top;background-repeat:no-repeat;}"
+        "@media (prefers-color-scheme: dark){"
+        ".stApp{background-image:linear-gradient(rgba(14,17,23,0.88),rgba(14,17,23,0.88)),"
+        f"url('data:image/jpeg;base64,{b64}');}}"
+        "}"
+        "</style>"
+    )
 
 
 st.markdown(background_css(), unsafe_allow_html=True)
