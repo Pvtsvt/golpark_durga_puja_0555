@@ -157,11 +157,11 @@ def background_css():
     # Photo ke upar safed/kaala parda (overlay) - isse photo halki dikhti hai, data saaf
     return (
         "<style>"
-        ".stApp{background-image:linear-gradient(rgba(255,255,255,0.62),rgba(255,255,255,0.62)),"
+        ".stApp{background-image:linear-gradient(rgba(255,255,255,0.3),rgba(255,255,255,0.3)),"
         f"url('data:image/jpeg;base64,{b64}');"
         "background-size:cover;background-position:center top;background-repeat:no-repeat;}"
         "@media (prefers-color-scheme: dark){"
-        ".stApp{background-image:linear-gradient(rgba(14,17,23,0.88),rgba(14,17,23,0.88)),"
+        ".stApp{background-image:linear-gradient(rgba(14,17,23,0.7),rgba(14,17,23,0.7)),"
         f"url('data:image/jpeg;base64,{b64}');}}"
         "}"
         "</style>"
@@ -173,6 +173,11 @@ st.markdown(background_css(), unsafe_allow_html=True)
 # 5. Header
 st.title("Golpark Durga Puja 2026")
 
+# Save / Cancel / Done ke baad ka message (rerun ke baad bhi dikhe)
+_flash = st.session_state.pop("flash", None)
+if _flash:
+    st.success(_flash)
+
 # Bade font / bada search box (elderly users ke liye) aur mobile par label + box ek hi line me
 st.markdown(
     """
@@ -181,7 +186,7 @@ st.markdown(
     div[data-testid="stCustomComponentV1"] { font-size: 1.4rem; }
     div[data-testid="stHorizontalBlock"] { flex-wrap: nowrap !important; align-items: center; }
     div[data-testid="stHorizontalBlock"] > div { min-width: 0 !important; }
-    [data-testid="stDataFrame"], [data-testid="stDataEditor"] { opacity: 0.88; }
+    [data-testid="stDataFrame"], [data-testid="stDataEditor"] { opacity: 0.8; }
     .qno-label { font-size: 1.3rem; font-weight: 700; margin: 0; }
     </style>
     """,
@@ -270,18 +275,19 @@ if is_admin:
     if cancel_top or cancel_bottom:
         # Sheet me jo already saved hai wo touch nahi hota, bas unsaved edits hat jaate hain
         st.session_state.editor_ver += 1
+        st.session_state.flash = "Cancelled!"
         st.rerun()
 
     if done_top or done_bottom:
         # Save + User mode me wapas
         save_to_sheet()
         st.session_state.go_user = True
-        st.toast("Saved! User mode me wapas aa gaye.")
+        st.session_state.flash = "Saved! Back to User mode"
         st.rerun()
 
     if save_top or save_bottom:
         save_to_sheet()
-        st.toast("Google Sheet successfully update ho gayi!")
+        st.session_state.flash = "Data Saved!"
         st.rerun()
 else:
     # User mode: har 5 minute me sheet se naya data apne aap aa jata hai
