@@ -45,6 +45,8 @@ def _num_text(v):
 def prep(data):
     """Sheet ke data ko editor ke layak banao (Status/2026/Date ke types)."""
     data = data.copy()
+    # Sheet ke header kabhi number (2025, 2026) ban jaate hain; Streamlit ko text naam chahiye
+    data.columns = [str(c).strip() for c in data.columns]
     c = special_cols(data)
     if c["status"] is not None:
         # sirf Pending / Paid; baaki kuch ho to khaali dikhega
