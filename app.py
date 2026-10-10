@@ -1,6 +1,7 @@
 import base64
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 from st_keyup import st_keyup
@@ -8,10 +9,90 @@ from streamlit_gsheets import GSheetsConnection
 
 st.set_page_config(page_title="Golpark Durga Puja 2026", layout="wide")
 
+# --- Column helpers: Status / 2025 / 2026 / Date ---
+STATUS_OPTIONS = ["Pending", "Paid"]
+DATE_FMT = "%d/%m/%Y"
+
+
+def find_col(data, pred):
+    for c in data.columns:
+        if pred(str(c).strip().lower()):
+            return c
+    return None
+
+
+def special_cols(data):
+    return {
+        "status": find_col(data, lambda n: n == "status"),
+        "y2025": find_col(data, lambda n: n == "2025"),
+        "y2026": find_col(data, lambda n: n == "2026"),
+        "date": find_col(data, lambda n: n == "date" or n.endswith(" date") or n.startswith("date ")),
+    }
+
+
+def _num_text(v):
+    if pd.isna(v):
+        return None
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    return str(v).strip() or None
+
+
+def prep(data):
+    """Sheet ke data ko editor ke layak banao (Status/2026/Date ke types)."""
+    data = data.copy()
+    c = special_cols(data)
+    if c["status"] is not None:
+        # sirf Pending / Paid; baaki kuch ho to khaali dikhega
+        norm = data[c["status"]].astype(str).str.strip().str.capitalize()
+        data[c["status"]] = norm.where(norm.isin(STATUS_OPTIONS), None).astype("object")
+    if c["y2026"] is not None:
+        data[c["y2026"]] = data[c["y2026"]].map(_num_text).astype("object")
+    if c["date"] is not None:
+        col = data[c["date"]]
+        parsed = pd.to_datetime(col, dayfirst=True, errors="coerce")
+        # sirf tab convert karo jab saari bhari hui dates sahi parse hui ho (data loss se bachne ke liye)
+        if parsed.notna().sum() == col.notna().sum():
+            data[c["date"]] = parsed.dt.date.where(parsed.notna(), None).astype("object")
+    return data
+
+
+def to_sheet(data):
+    """Editor ke data ko Sheet me likhne layak banao."""
+    data = data.copy()
+    c = special_cols(data)
+    if c["date"] is not None:
+        data[c["date"]] = data[c["date"]].map(
+            lambda v: v.strftime(DATE_FMT) if hasattr(v, "strftime") and not pd.isna(v) else v
+        )
+    return data
+
+
+def editor_config(data):
+    c = special_cols(data)
+    cfg = {}
+    if c["status"] is not None:
+        cfg[c["status"]] = st.column_config.SelectboxColumn(
+            "Status", options=STATUS_OPTIONS, required=False
+        )
+    if c["y2025"] is not None:
+        cfg[c["y2025"]] = st.column_config.Column(disabled=True)
+    if c["y2026"] is not None:
+        # sirf digits aur comma (jaise 500 ya 1,500)
+        cfg[c["y2026"]] = st.column_config.TextColumn(
+            str(c["y2026"]),
+            validate=r"^[0-9]+(,[0-9]+)*$",
+            help="Sirf number ya comma",
+        )
+    if c["date"] is not None and data[c["date"]].map(lambda v: hasattr(v, "strftime")).any():
+        cfg[c["date"]] = st.column_config.DateColumn(str(c["date"]), format="DD/MM/YYYY")
+    return cfg
+
+
 # 1. Google Sheets se data read karna
 # ttl=0 lagane se har refresh par real-time fresh data aayega (caching band rahegi)
 conn = st.connection("gsheets", type=GSheetsConnection)
-df = conn.read(ttl=0)
+df = prep(conn.read(ttl=0))
 
 # 2. Allowed PINs (Streamlit secrets se aayenge)
 allowed_pins = [str(p) for p in st.secrets.get("ADMIN_PINS", ["12345"])]
@@ -100,6 +181,7 @@ st.markdown(
     div[data-testid="stCustomComponentV1"] { font-size: 1.4rem; }
     div[data-testid="stHorizontalBlock"] { flex-wrap: nowrap !important; align-items: center; }
     div[data-testid="stHorizontalBlock"] > div { min-width: 0 !important; }
+    [data-testid="stDataFrame"], [data-testid="stDataEditor"] { opacity: 0.88; }
     .qno-label { font-size: 1.3rem; font-weight: 700; margin: 0; }
     </style>
     """,
@@ -155,6 +237,7 @@ if is_admin:
         num_rows="fixed" if is_filtered else "dynamic",
         hide_index=True,
         use_container_width=True,
+        column_config=editor_config(filtered),
         # key badalne se editor reset hota hai -> sirf unsaved edits hatte hain
         key=f"editor_{q}_{st.session_state.editor_ver}",
     )
@@ -177,7 +260,7 @@ if is_admin:
                 updated.loc[edited.index] = edited
             else:
                 updated = edited
-            conn.update(data=updated)
+            conn.update(data=to_sheet(updated))
             st.cache_data.clear()
             st.session_state.editor_ver += 1
 
@@ -204,10 +287,17 @@ else:
     # User mode: har 5 minute me sheet se naya data apne aap aa jata hai
     @st.fragment(run_every=300)
     def live_table():
-        fresh = conn.read(ttl=0)
+        fresh = prep(conn.read(ttl=0))
         view, filt = apply_filter(fresh, st.session_state.get("search_qno", ""))
         show_summary(view, filt)
-        st.dataframe(view, hide_index=True, use_container_width=True)
+        st.dataframe(
+            view,
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                k: v for k, v in editor_config(view).items() if k == special_cols(view)["date"]
+            },
+        )
 
     live_table()
 
