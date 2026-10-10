@@ -1,4 +1,8 @@
+import base64
+from pathlib import Path
+
 import streamlit as st
+import streamlit.components.v1 as components
 from st_keyup import st_keyup
 from streamlit_gsheets import GSheetsConnection
 
@@ -16,6 +20,12 @@ allowed_pins = [str(p) for p in st.secrets.get("ADMIN_PINS", ["12345"])]
 st.session_state.setdefault("role", "User")
 st.session_state.setdefault("admin_ok", False)
 st.session_state.setdefault("pin_error", False)
+st.session_state.setdefault("close_sidebar", False)
+
+# "Done" dabane par mode User banana hai (radio banne se pehle hi set karna padta hai)
+if st.session_state.pop("go_user", False):
+    st.session_state.role = "User"
+    st.session_state.admin_ok = False
 
 
 def cancel_admin():
@@ -46,6 +56,7 @@ else:
         if st.session_state.pin_input in allowed_pins:
             st.session_state.admin_ok = True
             st.session_state.pin_error = False
+            st.session_state.close_sidebar = True
             st.rerun()
         else:
             st.session_state.pin_error = True
@@ -54,6 +65,30 @@ else:
         st.sidebar.error("Galat PIN hai!")
 
 is_admin = st.session_state.role == "Admin" and st.session_state.admin_ok
+
+# Background: Maa Durga ki halki (transparent) photo, data ke peeche
+@st.cache_resource
+def background_css():
+    img = Path(__file__).parent / "MaaDurga2026.jpeg"
+    if not img.exists():
+        return ""
+    b64 = base64.b64encode(img.read_bytes()).decode()
+    return f"""
+    <style>
+    .stApp {{ position: relative; z-index: 0; }}
+    .stApp::before {{
+        content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+        background: url("data:image/jpeg;base64,{b64}") center top / cover no-repeat;
+        opacity: 0.35;
+    }}
+    @media (prefers-color-scheme: dark) {{
+        .stApp::before {{ opacity: 0.12; }}
+    }}
+    </style>
+    """
+
+
+st.markdown(background_css(), unsafe_allow_html=True)
 
 # 5. Header
 st.title("Golpark Durga Puja 2026")
@@ -94,20 +129,26 @@ if qno_col is None:
     st.warning("Sheet me 'Q.No.' column nahi mila.")
 
 # 7. Filter: Q.No. prefix match (C2 -> C2, C21, C22 ... ; C23 -> sirf C23)
-mask = None
-if q and qno_col is not None:
-    mask = normalize(df[qno_col]).str.startswith(q)
+def apply_filter(data, query):
+    """(filtered_df, is_filtered) wapas karta hai."""
+    query = "".join((query or "").split()).upper()
+    if query and qno_col is not None and qno_col in data.columns:
+        return data[normalize(data[qno_col]).str.startswith(query)], True
+    return data, False
 
-filtered = df if mask is None else df[mask]
-is_filtered = mask is not None
 
-if is_filtered:
-    st.caption(f"{len(filtered)} row mili")
-    if filtered.empty:
-        st.warning("Koi result nahi mila.")
+def show_summary(filtered, is_filtered):
+    if is_filtered:
+        st.caption(f"{len(filtered)} row mili")
+        if filtered.empty:
+            st.warning("Koi result nahi mila.")
+
+
+filtered, is_filtered = apply_filter(df, q)
 
 # 8. View vs Edit Mode (dono me same search/filter)
 if is_admin:
+    show_summary(filtered, is_filtered)
     st.session_state.setdefault("editor_ver", 0)
     top_bar = st.container()
     edited = st.data_editor(
@@ -122,24 +163,15 @@ if is_admin:
 
     def action_buttons(where, suffix):
         with where:
-            save_col, cancel_col, _ = st.columns([1, 1, 2])
-            save = save_col.button(
-                "Save Change", type="primary", key=f"save_{suffix}", use_container_width=True
+            c_save, c_cancel, c_done = st.columns(3)
+            save = c_save.button(
+                "Save", type="primary", key=f"save_{suffix}", use_container_width=True
             )
-            cancel = cancel_col.button(
-                "Cancel Changes", key=f"cancel_{suffix}", use_container_width=True
-            )
-        return save, cancel
+            cancel = c_cancel.button("Cancel", key=f"cancel_{suffix}", use_container_width=True)
+            done = c_done.button("Done", key=f"done_{suffix}", use_container_width=True)
+        return save, cancel, done
 
-    save_top, cancel_top = action_buttons(top_bar, "top")
-    save_bottom, cancel_bottom = action_buttons(bottom_bar, "bottom")
-
-    if cancel_top or cancel_bottom:
-        # Sheet me jo already saved hai wo touch nahi hota, bas unsaved edits hat jaate hain
-        st.session_state.editor_ver += 1
-        st.rerun()
-
-    if save_top or save_bottom:
+    def save_to_sheet():
         with st.spinner("Saving data to cloud..."):
             if is_filtered:
                 updated = df.copy()
@@ -149,7 +181,47 @@ if is_admin:
             conn.update(data=updated)
             st.cache_data.clear()
             st.session_state.editor_ver += 1
-            st.toast("Google Sheet successfully update ho gayi!")
-            st.rerun()
+
+    save_top, cancel_top, done_top = action_buttons(top_bar, "top")
+    save_bottom, cancel_bottom, done_bottom = action_buttons(bottom_bar, "bottom")
+
+    if cancel_top or cancel_bottom:
+        # Sheet me jo already saved hai wo touch nahi hota, bas unsaved edits hat jaate hain
+        st.session_state.editor_ver += 1
+        st.rerun()
+
+    if done_top or done_bottom:
+        # Save + User mode me wapas
+        save_to_sheet()
+        st.session_state.go_user = True
+        st.toast("Saved! User mode me wapas aa gaye.")
+        st.rerun()
+
+    if save_top or save_bottom:
+        save_to_sheet()
+        st.toast("Google Sheet successfully update ho gayi!")
+        st.rerun()
 else:
-    st.dataframe(filtered, hide_index=True, use_container_width=True)
+    # User mode: har 5 minute me sheet se naya data apne aap aa jata hai
+    @st.fragment(run_every=300)
+    def live_table():
+        fresh = conn.read(ttl=0)
+        view, filt = apply_filter(fresh, st.session_state.get("search_qno", ""))
+        show_summary(view, filt)
+        st.dataframe(view, hide_index=True, use_container_width=True)
+
+    live_table()
+
+# PIN OK ke baad sidebar band karna (mobile par sidebar poori screen gher leta hai)
+if st.session_state.pop("close_sidebar", False):
+    components.html(
+        """
+        <script>
+        const doc = window.parent.document;
+        const btn = doc.querySelector('[data-testid="stSidebarCollapseButton"] button')
+                 || doc.querySelector('button[kind="header"]');
+        if (btn) btn.click();
+        </script>
+        """,
+        height=0,
+    )
