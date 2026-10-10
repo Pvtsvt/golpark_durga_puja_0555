@@ -157,11 +157,11 @@ def background_css():
     # Photo ke upar safed/kaala parda (overlay) - isse photo halki dikhti hai, data saaf
     return (
         "<style>"
-        ".stApp{background-image:linear-gradient(rgba(255,255,255,0.6),rgba(255,255,255,0.6)),"
+        ".stApp{background-image:linear-gradient(rgba(255,255,255,0.7),rgba(255,255,255,0.7)),"
         f"url('data:image/jpeg;base64,{b64}');"
         "background-size:cover;background-position:center top;background-repeat:no-repeat;}"
         "@media (prefers-color-scheme: dark){"
-        ".stApp{background-image:linear-gradient(rgba(14,17,23,0.6),rgba(14,17,23,0.6)),"
+        ".stApp{background-image:linear-gradient(rgba(14,17,23,0.7),rgba(14,17,23,0.7)),"
         f"url('data:image/jpeg;base64,{b64}');}}"
         "}"
         "</style>"
@@ -253,6 +253,7 @@ if is_admin:
         hide_index=True,
         use_container_width=True,
         column_config=editor_config(filtered),
+        column_order=list(df.columns),  # sheet wala order hi rahe
         # key badalne se editor reset hota hai -> sirf unsaved edits hatte hain
         key=f"editor_{q}_{st.session_state.editor_ver}",
     )
@@ -310,6 +311,7 @@ else:
             view,
             hide_index=True,
             use_container_width=True,
+            column_order=list(fresh.columns),  # sheet wala order hi rahe
             column_config={
                 k: v for k, v in editor_config(view).items() if k == special_cols(view)["date"]
             },
