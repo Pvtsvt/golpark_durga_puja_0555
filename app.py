@@ -27,6 +27,7 @@ def find_col(data, pred):
 def special_cols(data):
     return {
         "status": find_col(data, lambda n: n == "status"),
+        "y2024": find_col(data, lambda n: n == "2024"),
         "y2025": find_col(data, lambda n: n == "2025"),
         "y2026": find_col(data, lambda n: n == "2026"),
         "logs": find_col(data, lambda n: n in ("logs", "log")),
@@ -186,12 +187,16 @@ def editor_config(data):
         cfg[c["status"]] = st.column_config.SelectboxColumn(
             "Status", options=STATUS_OPTIONS, required=False
         )
-    if c["y2025"] is not None:
-        cfg[c["y2025"]] = st.column_config.Column(disabled=True)
+    for key in ("y2024", "y2025"):  # purane saal: kisi ke liye editable nahi
+        if c[key] is not None:
+            cfg[c[key]] = st.column_config.Column(disabled=True)
     if c["y2026"] is not None:
         # free text: kuch bhi likh sakte hain
         cfg[c["y2026"]] = st.column_config.TextColumn(str(c["y2026"]))
-    if c["date"] is not None and data[c["date"]].map(lambda v: hasattr(v, "strftime")).any():
+    # Date picker tab bhi aaye jab column abhi khaali ho (sirf date/khaali values hon)
+    if c["date"] is not None and data[c["date"]].map(
+        lambda v: v is None or hasattr(v, "strftime") or (not isinstance(v, str) and pd.isna(v))
+    ).all():
         cfg[c["date"]] = st.column_config.DateColumn(str(c["date"]), format="DD/MM/YYYY")
     return cfg
 
@@ -277,7 +282,7 @@ def background_css():
     # Photo ke upar safed/kaala parda (overlay) - isse photo halki dikhti hai, data saaf
     return (
         "<style>"
-        ".stApp{background-image:linear-gradient(rgba(255,255,255,0.7),rgba(255,255,255,0.7)),"
+        ".stApp{background-image:linear-gradient(rgba(255,255,255,0.8),rgba(255,255,255,0.8)),"
         f"url('data:image/jpeg;base64,{b64}');"
         "background-size:cover;background-position:center top;background-repeat:no-repeat;}"
         "@media (prefers-color-scheme: dark){"
@@ -306,7 +311,7 @@ st.markdown(
     div[data-testid="stCustomComponentV1"] { font-size: 1.4rem; }
     div[data-testid="stHorizontalBlock"] { flex-wrap: nowrap !important; align-items: center; }
     div[data-testid="stHorizontalBlock"] > div { min-width: 0 !important; }
-    [data-testid="stDataFrame"], [data-testid="stDataEditor"] { opacity: 0.7; }
+    [data-testid="stDataFrame"], [data-testid="stDataEditor"] { opacity: 0.82; }
     /* label aur search box ek hi line me, upar se barabar */
     .qno-label { font-size: 1.6rem; font-weight: 800; margin: 0 !important; padding: 0;
                  white-space: nowrap; height: 2.9rem; line-height: 2.9rem; color: #000; }
